@@ -81,6 +81,24 @@ void init_lru(int assoc_index, int block_index)
 void accessMemory(address addr, word* data, WriteEnable we)
 {
   /* Declare variables here */
+	unsigned int offset_size = uint_log2(block_size/4);
+	unsigned int index_size = uint_log2(set_count);
+
+	unsigned int offset_mask = (block_size / 4) - 1;
+	unsigned int index_mask = 2^index_size - 1 << offset_size;
+
+	unsigned int offset = addr & offset_mask;
+	unsigned int index = addr & index_mask;
+	unsigned int tag = addr >> (index_size + offset_size);
+
+	if(cache[index].block[offset].tag == tag) {//this only handles direct-mapped case
+		//handle cache hit
+	}
+	else {
+		//handle cache miss
+	}
+
+	printf("%d tag bits\t%d index bits\t%d offset bits\n", 32 - (index_size + offset_size), index_size, offset_size);
 
   /* handle the case of no cache at all - leave this in */
   if(assoc == 0) {
@@ -115,7 +133,50 @@ void accessMemory(address addr, word* data, WriteEnable we)
   functions can be found in tips.h
   */
 
-  /* Start adding code here */
+
+	 /*
+		*
+			Given a 32-bit address, to break it into Tag, Index, and Offest bits:
+
+				Based on the cache configuration:
+					Determine the number of bits needed for the offset:
+						1. If one word blocks --> no offset bits
+						2. If n word blocks ----> log(n)/log(2) bits
+
+					Determine the number of bits needed for the index:
+						1. If direct mapped with n blocks	--> log(n)/log(2) bits
+						2. If n-way set associative where S is the cache size(bytes)
+							 and B is the block size(bytes) --> log(S/(B*n))/log(2) bits
+						3. If fully assiciative ------------> no index bits
+
+					The rest of the bits are used for the tag.
+		*/
+
+
+
+		/*
+		*
+		*
+		*
+			To determine which block in the cache we want to access:
+
+				1. If direct-mapped ----------> use index bits
+				2. If n-way set associative	--> use index bits to determine which set to look in,
+					 block can be any of those n sets
+				3. If fully associaive -------> block can be any block in the cache
+		*
+		*
+		*
+			On memory READ:
+		*
+		*
+		*
+			On READ MISS:
+		*
+		*
+		*
+			On memory WRITE:
+		*/
 
 
   /* This call to accessDRAM occurs when you modify any of the
