@@ -1,4 +1,6 @@
 #include "tips.h"
+#include <stdlib.h>
+#include <time.h>
 
 /* The following two functions are defined in util.c */
 
@@ -7,6 +9,7 @@ unsigned int uint_log2(word w);
 
 /* return random int from 0..x-1 */
 int randomint( int x );
+
 
 /*
   This function allows the lfu information to be displayed
@@ -67,6 +70,31 @@ void init_lru(int assoc_index, int block_index)
 }
 
 /*
+	This function chooses which block should be replaced, based on replacement policy
+
+		set - the set from the cache that we want a block to be replaced in
+
+	returns a pointer to the block that we want to replace
+
+*/
+cacheBlock* replacementBlock(cacheSet* set) {
+	cacheBlock* block = NULL;
+
+	switch(policy) {
+		case RANDOM:
+			break;
+		case LRU:
+			break;
+		case LFU:
+			break;
+		default:
+			break;
+	}
+
+	return block;
+}
+
+/*
   This is the primary function you are filling out,
   You are free to add helper functions if you need them
 
@@ -80,9 +108,8 @@ void init_lru(int assoc_index, int block_index)
 */
 void accessMemory(address addr, word* data, WriteEnable we)
 {
-  /* Declare variables here */
-	unsigned int offset_size = uint_log2(block_size/4);
-	unsigned int index_size = uint_log2(set_count);
+	unsigned int offset_size = uint_log2(block_size/4); //Number of bits needed for the offset
+	unsigned int index_size = uint_log2(set_count);			//Number of bits needed for the index
 
 	unsigned int offset_mask = (block_size / 4) - 1;
 	unsigned int index_mask = 2^index_size - 1 << offset_size;
@@ -90,13 +117,6 @@ void accessMemory(address addr, word* data, WriteEnable we)
 	unsigned int offset = addr & offset_mask;
 	unsigned int index = addr & index_mask;
 	unsigned int tag = addr >> (index_size + offset_size);
-
-	if(cache[index].block[offset].tag == tag) {//this only handles direct-mapped case
-		//handle cache hit
-	}
-	else {
-		//handle cache miss
-	}
 
 	printf("%d tag bits\t%d index bits\t%d offset bits\n", 32 - (index_size + offset_size), index_size, offset_size);
 
@@ -133,51 +153,19 @@ void accessMemory(address addr, word* data, WriteEnable we)
   functions can be found in tips.h
   */
 
-
-	 /*
-		*
-			Given a 32-bit address, to break it into Tag, Index, and Offest bits:
-
-				Based on the cache configuration:
-					Determine the number of bits needed for the offset:
-						1. If one word blocks --> no offset bits
-						2. If n word blocks ----> log(n)/log(2) bits
-
-					Determine the number of bits needed for the index:
-						1. If direct mapped with n blocks	--> log(n)/log(2) bits
-						2. If n-way set associative where S is the cache size(bytes)
-							 and B is the block size(bytes) --> log(S/(B*n))/log(2) bits
-						3. If fully assiciative ------------> no index bits
-
-					The rest of the bits are used for the tag.
-		*/
-
-
-
-		/*
-		*
-		*
-		*
-			To determine which block in the cache we want to access:
-
-				1. If direct-mapped ----------> use index bits
-				2. If n-way set associative	--> use index bits to determine which set to look in,
-					 block can be any of those n sets
-				3. If fully associaive -------> block can be any block in the cache
-		*
-		*
-		*
-			On memory READ:
-		*
-		*
-		*
-			On READ MISS:
-		*
-		*
-		*
-			On memory WRITE:
-		*/
-
+	if(we == READ) {
+		for(int i = 0; i < assoc; i++) {	//Loop through all blocks in the set
+			if(cache[index].block[i].tag == tag) { 	//READ HIT!!
+				*data = cache[index].block[i].data[offset];	//Put the value found in data
+				break;
+			}
+		}
+		//At this point we looked through all the blocks in the set and none of the tags
+		//match the address tag. We have a READ MISS!
+	}
+	else {	//if (we == WRITE)
+		
+	}
 
   /* This call to accessDRAM occurs when you modify any of the
      cache parameters. It is provided as a stop gap solution.
