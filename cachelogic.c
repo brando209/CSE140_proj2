@@ -84,7 +84,7 @@ void init_lru(int assoc_index, int block_index)
     assoc_index - the cache unit that contains the block to be modified
     block_number - the index of the block to be modified
 
-	lru.value ranges from 0 to assoc:
+	lru.value ranges from 0 to assoc(when all the blocks in the set are VALID):
 		-lru.value = 0 -----> this block has not been used
 		-lru.value = 1 -----> this is the most recently used block
 		-lru.value = assoc -> this is the least recently used block
@@ -93,18 +93,38 @@ void init_lru(int assoc_index, int block_index)
 				This function will update the blocks lru.value to 1(most recently used)
 				and increment this value for all the other blocks in the set by 1.
 */
-void update_lru(int assoc_index, int block_index)
+void update_policy_info(int assoc_index, int block_index)
 {
 	//Update the accessed block to be the most recently used block
 	cache[assoc_index].block[block_index].lru.value = 1;
+	//Update the accessCount variable
+	cache[assoc_index].block[block_index].accessCount++;
 	//Update the rest of the blocks in the set to reflect this change
 	for(int index = 0; index < assoc; index++) {
-		if(index != block_index) {
+		if(cache[index].block[index].valid == INVALID && index != block_index) {
 			cache[assoc_index].block[index].lru.value++;
 		}
 	}
 }
 
+/*
+	This function checks if there is a block in the given set that is invalid
+
+		set - pointer to a set needing to be checked
+
+	returns the block index of the first invalid block found, or -1 if none found
+*/
+int search_for_invalid(cacheSet* set) {
+	//Loop through all blocks in the set
+	for(int block_index = 0; block_index < assoc; block_index++) {
+		//Return the block index if the block is invalid
+		if(set->block[block_index].valid == INVALID) {
+			return block_index;
+		}
+	}
+
+	return -1; //No invalid blocks in set
+}
 
 /*
 	This function chooses which block should be replaced, based on replacement policy
@@ -118,25 +138,27 @@ void update_lru(int assoc_index, int block_index)
 cacheBlock* replacementBlock(cacheSet* set, unsigned int* block_i) {
 	cacheBlock* block = NULL;
 
+	//For any repacement policy, give precedence to an invalid block
+	int invalid = search_for_invalid(set);
+	if(invalid > -1) {
+		block = &(set->block[invalid]);
+		*block_i = invalid;
+		return block;
+	}
+
 	switch(policy) {
 		case RANDOM://Choose a random block in the set to replace
-			//TODO: Change this to choose an invalid block and if none then choose random one
 			*block_i = randomint(assoc);
 			block = &(set->block[*block_i]);
 			break;
 		case LRU: //The block to replace has `lru.value` == `assoc`
+			//TODO:FIX lru information
 			//For each block in the set
-			*block_i = 0;
 			for(int block_index = 0; block_index < assoc; block_index++) {
+				*block_i = block_index;
 				block = &(set->block[block_index]);
-				//Choose the first invalid block, if any
-				if(block->valid == INVALID) {
-					*block_i = block_index;
-					return block;
-				}
 				//Check if this block is least recently used (lru.value == assoc)
 				if(block->lru.value == assoc) {
-					*block_i = block_index;
 					break;
 				}
 			}
@@ -148,11 +170,6 @@ cacheBlock* replacementBlock(cacheSet* set, unsigned int* block_i) {
 			//For each block in the set, beginning with the second block:
 			//compare the block with the LFU block
 			for(int block_index = 0; block_index < assoc; block_index++) {
-				//Choose the first invalid block, if any
-				if(block->valid == INVALID) {
-					*block_i = block_index;
-					return block;
-				}
 				//If the current block is less frequently used than the current LFU block
 				if(set->block[block_index].accessCount < block->accessCount) {
 					//Make the current block the new LFU block
@@ -168,7 +185,7 @@ cacheBlock* replacementBlock(cacheSet* set, unsigned int* block_i) {
 
 void dec2bin(int n) {
 	int c, k;
-  printf("%8x is: ", n);
+  printf("0x%.8x is: ", n);
   for (c = 31; c >= 0; c--)
   {
     k = n >> c;
@@ -193,10 +210,10 @@ void dec2bin(int n) {
 */
 void accessMemory(address addr, word* data, WriteEnable we)
 {
-	unsigned int offset_size = uint_log2(block_size/4); //Number of bits needed for the offset
+	unsigned int offset_size = uint_log2(block_size); //Number of bits needed for the offset
 	unsigned int index_size = uint_log2(set_count);			//Number of bits needed for the index
 
-	unsigned int offset_mask = (block_size / 4) - 1;
+	unsigned int offset_mask = block_size - 1;
 	unsigned int index_mask = (uint_pow2(index_size) - 1) << offset_size;
 
 	unsigned int offset = addr & offset_mask;
@@ -205,21 +222,24 @@ void accessMemory(address addr, word* data, WriteEnable we)
 
 	TransferUnit transfer_unit = uint_log2(block_size);
 
+	cacheBlock* block;			//A pointer to the block to replace, if any
+	unsigned int block_i;		//Index of the block to replace
+	int cacheMiss = 0;			//Flag that indicates cache miss
+
 	printf("****\t**********\t**********\t**********\t****\n");
 	printf("%d Tag bits\t%d Index bits\t%d Offset bits\n", 32 - (index_size + offset_size), index_size, offset_size);
 	printf("Address: ");
 	dec2bin(addr);
-//	printf("Index mask: ");
-//	dec2bin(index_mask);
-//	printf("Offset mask: ");
-//	dec2bin(offset_mask);
+	printf("Index mask: ");
+	dec2bin(index_mask);
+	printf("Offset mask: ");
+	dec2bin(offset_mask);
   printf("Tag: ");
 	dec2bin(addr_tag);
 	printf("Index: ");
 	dec2bin(index);
 	printf("Offset: ");
 	dec2bin(offset);
-	printf("****\t**********\t**********\t**********\t****\n\n");
 
   /* handle the case of no cache at all - leave this in */
   if(assoc == 0) {
@@ -254,61 +274,93 @@ void accessMemory(address addr, word* data, WriteEnable we)
   functions can be found in tips.h
   */
 
-	cacheBlock* block;
+	int block_index;
+	//This part is common between READ and WRITE, finding the correct block
+	//Loop through all blocks in the set
+	for(block_index = 0; block_index < assoc; block_index++) {
+		block = &(cache[index].block[block_index]);
+		printf("Accessing block[%d]...\n", block_index);
+		if(block->valid == VALID && block->tag == addr_tag) { 	//Block FOUND!!
+			printf("HIT!\n");
 
-	if(we == READ) {
-		//Loop through all blocks in the set
-		for(int block_index = 0; block_index < assoc; block_index++) {
-			block = &(cache[index].block[block_index]);
+			//Highlight the word in GREEN
+			highlight_offset(index, block_index, offset, HIT);
+			//Copy the value to data for the caller
+			memcpy(data, block->data + offset, 4);
 
-			if(block->valid == VALID && block->tag == addr_tag) { 	//READ HIT!!
-				printf("READ HIT!\n");
+			//Update replacement policy information
+			update_policy_info(index, block_index);
 
-				//Highlight the word in GREEN
-				highlight_offset(index, block_index, offset, HIT);
-				//Copy the value to data for the caller
-				memcopy(data, block->data, 4);
-
-				//Update replacement policy information
-				update_lru(index, block_index);
-				block->accessCount++;
-
-				//No need to continue
-			  return;
-			}
+			//Block found, break out of loop
+		  break;
 		}
-		//At this point we looked through all the blocks in the set and none of the tags
-		//match the address tag. We have a READ MISS!
+		printf("Miss on block[%d]\n", block_index);
+	}
+	if(block_index == assoc)
+		cacheMiss = 1;
 
-		unsigned int block_i;			//The block index of the set to be replaced
-		block = replacementBlock(&cache[index], &block_i); //Pointer to the block to be replaced
+	if(cacheMiss) {
+		printf("\nMiss in set... choosing block to replace...\n");
 
-		printf("READ MISS!\n");
-		printf("Selected set: %d\t Selected block: %d\t", index, block_i);
-		printf("Selected offset: %d\n\n", offset);
+		if(we == READ)
+			printf("READ MISS!\n\n");
+		else if(we == WRITE)
+			printf("WRITE MISS\n\n!");
 
-		//Highlight the block and offset
+		block = replacementBlock(&cache[index], &block_i);
+
+		printf("Selected block: %d\n", block_i);
+		update_policy_info(index, block_i);
+
+		//Outline the block and highlight offset
 		highlight_block(index, block_i);
 		highlight_offset(index, block_i, offset, MISS);
+	  printf("Highlighted block[%d].data[%d]\n", index, offset);
 
 		//Check if the block needs to be written to DRAM first (for write-back)
 		if(memory_sync_policy == WRITE_BACK && block->dirty == DIRTY) {
+			//Get the address for this block from the blocks tag and the index of the set.
 			unsigned int block_addr = (block->tag << (index_size + offset_size)) + (index << offset_size);
-			accessDRAM(block_addr, (byte*)block->data, transfer_unit, WRITE);
+			printf("Block needs to be written to memory address 0x%.8x\nAccessing DRAM...\n", block_addr);
+			accessDRAM(block_addr, block->data, transfer_unit, WRITE);
+			printf("Write successful from cache[%d].block[%d] to memory address 0x%.8x\n", index, block_i, block_addr);
 		}
 
-		//Get the needed block from DRAM
-		accessDRAM(addr, (byte*)block->data, transfer_unit, READ);
-		
+		//Handle the miss by moving the block from DRAM into this block
+		printf("Getting %d byte block from memory address %.8x...\n\n", block_size, addr);
+		//Put block found at memory location into the replaced blocks data field
+		accessDRAM(addr, block->data, transfer_unit, READ);
+		//Set this block as VALID and set the new tag
+		block->valid = VALID;
+		block->tag = addr_tag;
+
+		printf("****\t**********\t**********\t**********\t****\n\n");
+
+	}//End if(cacheMiss)
+
+
+	if(we == READ) {
+		//If read, copy the wanted byte from cache into `data` for the caller
+		printf("Reading data from cache[%d].block[%d].data[%d]\n", index, block_i, offset);
+		memcpy(data, block->data + offset, 4);
+	}	else {
+		//If write, copy the wanted byte from `data` into cache
+		printf("Writing data into cache[%d].block[%d].data[%d]\n", index, block_i, offset);
+		memcpy(block->data + offset, data, 4);
+		//This block has been modified, set the dirty bit
+		block->dirty = DIRTY;
+		//Update the block in memory (for write-through)
+		if(memory_sync_policy == WRITE_THROUGH) {
+			printf("Writing through to memory address %.8x...\n\n", addr);
+			accessDRAM(addr, block->data, transfer_unit, WRITE);
+		}
 	}
-	else {	//if (we == WRITE)
-		
-	}
+
 
   /* This call to accessDRAM occurs when you modify any of the
      cache parameters. It is provided as a stop gap solution.
      At some point, ONCE YOU HAVE MORE OF YOUR CACHELOGIC IN PLACE,
      THIS LINE SHOULD BE REMOVED.
   */
-  accessDRAM(addr, (byte*)data, WORD_SIZE, we);
+//  accessDRAM(addr, (byte*)data, WORD_SIZE, we);
 }
