@@ -75,7 +75,7 @@ void init_lfu(int assoc_index, int block_index)
 */
 void init_lru(int assoc_index, int block_index)
 {
-  cache[assoc_index].block[block_index].lru.value = assoc;
+  cache[assoc_index].block[block_index].lru.value = 0;
 }
 
 /*
@@ -126,6 +126,26 @@ int search_for_invalid(cacheSet* set) {
 	return -1; //No invalid blocks in set
 }
 
+cacheBlock* get_lru_block(cacheSet* set, int* index) {
+			cacheBlock* block = NULL;
+			int block_index;
+
+			for(block_index = 0; block_index < assoc; block_index++) {
+				*index = block_index;
+				printf("\tSelecting block %d...\n", *index);
+				block = &(set->block[block_index]);
+				printf("Testing block %d...\n", *index);
+
+				//Check if this block is least recently used (lru.value == assoc)
+				if(block->lru.value == assoc) {
+					printf("This block is LRU, lru.value is %d\n", block->lru.value);
+					break;
+				}
+
+			}
+			return block;
+}
+
 /*
 	This function chooses which block should be replaced, based on replacement policy
 
@@ -154,34 +174,31 @@ cacheBlock* replacementBlock(cacheSet* set, unsigned int* block_i) {
 		case LRU: //The block to replace has `lru.value` == `assoc`
 			//TODO:FIX lru information
 			//For each block in the set
-			printf("LRU info: ");
-			for(int block_index = 0; block_index < assoc; block_index++) {
-				*block_i = block_index;
-				printf("\tSelecting block %d...\n", *block_i);
-				block = &(set->block[block_index]);
-				printf("Testing block %d...\n", *block_i);
-
-				//Check if this block is least recently used (lru.value == assoc)
-				if(block->lru.value == assoc) {
-					printf("This block is LRU, lru.value is %d\n", block->lru.value);
-					break;
-				}
-				else { printf("This block is not LRU, lru.value is %d\n", block->lru.value); }
-			}
+			block = get_lru_block(set, block_i);
 			break;
 		case LFU:	//The block to replace has the lowest `accessCount`
 			//Initially choose the first block as the LFU block
 			*block_i = 0;
 			block = &(set->block[0]);
+			int count = 1; 	//Keeps track of how many block are LFU blocks
 			//For each block in the set, beginning with the second block:
 			//compare the block with the LFU block
-			for(int block_index = 0; block_index < assoc; block_index++) {
+			for(int block_index = 1; block_index < assoc; block_index++) {
 				//If the current block is less frequently used than the current LFU block
-				if(set->block[block_index].accessCount < block->accessCount) {
+				if(set->block[block_index].accessCount <= block->accessCount) {
+					if(set->block[block_index].accessCount == block->accessCount) {
+						count++;
+					}
+					else {
+						count = 1;
+					}
 					//Make the current block the new LFU block
 					*block_i = block_index;
 					block = &(set->block[block_index]);
 				}
+			}
+			if(count > 1) {
+				block = get_lru_block(set, block_i);
 			}
 			break;
 	}
@@ -320,9 +337,7 @@ void accessMemory(address addr, word* data, WriteEnable we)
 
 		printf("Choosing block to replace...");
 		block = replacementBlock(&cache[index], &block_i);
-
 		printf("Selected block: %d\n", block_i);
-		update_policy_info(index, block_i);
 
 		//Outline the block and highlight the offset
 		highlight_block(index, block_i);
@@ -342,14 +357,25 @@ void accessMemory(address addr, word* data, WriteEnable we)
 		printf("Getting replacement block from memory address %.8x...\n\n", addr);
 		//Put block found at memory location into the replaced blocks data field
 		accessDRAM(addr, block->data, transfer_unit, READ);
+		//Update LRU policy information
+		update_policy_info(index, block_i);
 		//Set this block as VALID
 		block->valid = VALID;
-		//Set this block as VIRGIN
-		block->dirty = VIRGIN;
 		//Update the tag field
 		block->tag = addr_tag;
+		//Reset accessCount;
+		if(policy == LFU)
+			block->accessCount = 0;
+		//Set this block as VIRGIN
+		if(memory_sync_policy == WRITE_BACK)
+			block->dirty = VIRGIN;
 
 	}//End if(cacheMiss)
+
+	for(int i  = 0; i < block_size; i++) {
+		printf("%.2x ", block->data[i]);
+	}
+	printf("\n");
 
 
 	if(we == READ) {
