@@ -75,7 +75,7 @@ void init_lfu(int assoc_index, int block_index)
 */
 void init_lru(int assoc_index, int block_index)
 {
-  cache[assoc_index].block[block_index].lru.value = 0;
+  cache[assoc_index].block[block_index].lru.value = assoc;
 }
 
 /*
@@ -93,15 +93,15 @@ void init_lru(int assoc_index, int block_index)
 				This function will update the blocks lru.value to 1(most recently used)
 				and increment this value for all the other blocks in the set by 1.
 */
-void update_policy_info(int assoc_index, int block_index)
-{
+void update_policy_info(int assoc_index, int block_index) {
 	//Update the accessed block to be the most recently used block
 	cache[assoc_index].block[block_index].lru.value = 1;
-	//Update the accessCount variable
-	cache[assoc_index].block[block_index].accessCount++;
 	//Update the rest of the blocks in the set to reflect this change
 	for(int index = 0; index < assoc; index++) {
-		if(cache[index].block[index].valid == INVALID && index != block_index) {
+		int current_lru_value = cache[assoc_index].block[index].lru.value;
+		if(cache[assoc_index].block[index].valid == VALID &&
+			 cache[assoc_index].block[index].lru.value <= assoc &&
+			 index != block_index) {
 			cache[assoc_index].block[index].lru.value++;
 		}
 	}
@@ -154,13 +154,19 @@ cacheBlock* replacementBlock(cacheSet* set, unsigned int* block_i) {
 		case LRU: //The block to replace has `lru.value` == `assoc`
 			//TODO:FIX lru information
 			//For each block in the set
+			printf("LRU info: ");
 			for(int block_index = 0; block_index < assoc; block_index++) {
 				*block_i = block_index;
+				printf("\tSelecting block %d...\n", *block_i);
 				block = &(set->block[block_index]);
+				printf("Testing block %d...\n", *block_i);
+
 				//Check if this block is least recently used (lru.value == assoc)
 				if(block->lru.value == assoc) {
+					printf("This block is LRU, lru.value is %d\n", block->lru.value);
 					break;
 				}
+				else { printf("This block is not LRU, lru.value is %d\n", block->lru.value); }
 			}
 			break;
 		case LFU:	//The block to replace has the lowest `accessCount`
@@ -186,8 +192,7 @@ cacheBlock* replacementBlock(cacheSet* set, unsigned int* block_i) {
 void dec2bin(int n) {
 	int c, k;
   printf("0x%.8x is: ", n);
-  for (c = 31; c >= 0; c--)
-  {
+  for(c = 31; c >= 0; c--) {
     k = n >> c;
     if (k & 1)
       printf("1");
@@ -210,36 +215,27 @@ void dec2bin(int n) {
 */
 void accessMemory(address addr, word* data, WriteEnable we)
 {
-	unsigned int offset_size = uint_log2(block_size); //Number of bits needed for the offset
-	unsigned int index_size = uint_log2(set_count);			//Number of bits needed for the index
+	unsigned int offset_size, index_size; //Holds # of bits needed for the index and the offset
 
-	unsigned int offset_mask = block_size - 1;
-	unsigned int index_mask = (uint_pow2(index_size) - 1) << offset_size;
+	unsigned int offset_mask, index_mask;	//Holds masks to extrct offset and index information
 
-	unsigned int offset = addr & offset_mask;
-	unsigned int index = (addr & index_mask) >> offset_size;
-	unsigned int addr_tag = addr >> (index_size + offset_size);
+	unsigned int offset, index, addr_tag; //Holds the offset, index, and tag values
 
-	TransferUnit transfer_unit = uint_log2(block_size);
+	TransferUnit transfer_unit; //Hold the transfer unit size between cache and memory
 
-	cacheBlock* block;			//A pointer to the block to replace, if any
-	unsigned int block_i;		//Index of the block to replace
-	int cacheMiss = 0;			//Flag that indicates cache miss
+	cacheBlock* block = NULL;						//A pointer to the block to replace, if any
+	unsigned int block_i = -1;					//Index of the block to replace, if any
+	int cacheMiss = 0;									//Flag that indicates cache miss
 
+	/* Print to confirm correct ADDRESS, MASKS, TAG, INDEX, and OFFSET info *//*
 	printf("****\t**********\t**********\t**********\t****\n");
 	printf("%d Tag bits\t%d Index bits\t%d Offset bits\n", 32 - (index_size + offset_size), index_size, offset_size);
-	printf("Address: ");
-	dec2bin(addr);
-	printf("Index mask: ");
-	dec2bin(index_mask);
-	printf("Offset mask: ");
-	dec2bin(offset_mask);
-  printf("Tag: ");
-	dec2bin(addr_tag);
-	printf("Index: ");
-	dec2bin(index);
-	printf("Offset: ");
-	dec2bin(offset);
+	printf("Address: ");	dec2bin(addr);
+	printf("Index mask: ");	dec2bin(index_mask);
+	printf("Offset mask: ");	dec2bin(offset_mask);
+  printf("Tag: ");	dec2bin(addr_tag);
+	printf("Index: ");	dec2bin(index);
+	printf("Offset: ");	dec2bin(offset);		*/
 
   /* handle the case of no cache at all - leave this in */
   if(assoc == 0) {
@@ -247,7 +243,7 @@ void accessMemory(address addr, word* data, WriteEnable we)
     return;
   }
 
-  /*
+ /*
   You need to read/write between memory (via the accessDRAM() function) and
   the cache (via the cache[] global structure defined in tips.h)
 
@@ -273,68 +269,85 @@ void accessMemory(address addr, word* data, WriteEnable we)
   when to redraw and when to flash things. Descriptions of the animation
   functions can be found in tips.h
   */
+	offset_size = uint_log2(block_size); 		//Number of bits needed for the offset
+	index_size = uint_log2(set_count);			//Number of bits needed for the index
+	offset_mask = block_size - 1;
+	index_mask = ((1 << index_size) - 1) << offset_size; //same as (uint_pow2(index_size) - 1) << offset_size;
+	offset = addr & offset_mask;
+	index = (addr & index_mask) >> offset_size;
+	addr_tag = addr >> (index_size + offset_size);
+	transfer_unit = uint_log2(block_size);
 
 	int block_index;
+
 	//This part is common between READ and WRITE, finding the correct block
 	//Loop through all blocks in the set
 	for(block_index = 0; block_index < assoc; block_index++) {
 		block = &(cache[index].block[block_index]);
-		printf("Accessing block[%d]...\n", block_index);
+		printf("Accessing cache[%d].block[%d]...", index, block_index);
 		if(block->valid == VALID && block->tag == addr_tag) { 	//Block FOUND!!
 			printf("HIT!\n");
 
+			block_i = block_index;
 			//Highlight the word in GREEN
 			highlight_offset(index, block_index, offset, HIT);
 			//Copy the value to data for the caller
 			memcpy(data, block->data + offset, 4);
-
-			//Update replacement policy information
+			//Update lru policy information
 			update_policy_info(index, block_index);
+			//Increment accessCount for this block
+			block->accessCount++;
 
 			//Block found, break out of loop
 		  break;
 		}
-		printf("Miss on block[%d]\n", block_index);
+		printf("MISS!\n");
 	}
-	if(block_index == assoc)
+	if(block_index == assoc) {
+		printf("No match found, ");
 		cacheMiss = 1;
+	}
 
+	//This is also common to a READ and a WRITE: choosing the block to replace,
+	//writing that block to memory(write-back), resetting the accessCount for that
+	//block(LFU), and updating the lru information for the set, before replacing
 	if(cacheMiss) {
-		printf("\nMiss in set... choosing block to replace...\n");
 
 		if(we == READ)
 			printf("READ MISS!\n\n");
 		else if(we == WRITE)
-			printf("WRITE MISS\n\n!");
+			printf("WRITE MISS!\n\n");
 
+		printf("Choosing block to replace...");
 		block = replacementBlock(&cache[index], &block_i);
 
 		printf("Selected block: %d\n", block_i);
 		update_policy_info(index, block_i);
 
-		//Outline the block and highlight offset
+		//Outline the block and highlight the offset
 		highlight_block(index, block_i);
 		highlight_offset(index, block_i, offset, MISS);
-	  printf("Highlighted block[%d].data[%d]\n", index, offset);
+	  printf("Highlighted cache[%d].block[%d].data[%d]\n", index, block_i, offset);
 
 		//Check if the block needs to be written to DRAM first (for write-back)
 		if(memory_sync_policy == WRITE_BACK && block->dirty == DIRTY) {
 			//Get the address for this block from the blocks tag and the index of the set.
 			unsigned int block_addr = (block->tag << (index_size + offset_size)) + (index << offset_size);
-			printf("Block needs to be written to memory address 0x%.8x\nAccessing DRAM...\n", block_addr);
+			printf("Block needs to be written to memory address 0x%.8x before replacing.\nAccessing DRAM...\n", block_addr);
 			accessDRAM(block_addr, block->data, transfer_unit, WRITE);
 			printf("Write successful from cache[%d].block[%d] to memory address 0x%.8x\n", index, block_i, block_addr);
 		}
 
 		//Handle the miss by moving the block from DRAM into this block
-		printf("Getting %d byte block from memory address %.8x...\n\n", block_size, addr);
+		printf("Getting replacement block from memory address %.8x...\n\n", addr);
 		//Put block found at memory location into the replaced blocks data field
 		accessDRAM(addr, block->data, transfer_unit, READ);
-		//Set this block as VALID and set the new tag
+		//Set this block as VALID
 		block->valid = VALID;
+		//Set this block as VIRGIN
+		block->dirty = VIRGIN;
+		//Update the tag field
 		block->tag = addr_tag;
-
-		printf("****\t**********\t**********\t**********\t****\n\n");
 
 	}//End if(cacheMiss)
 
@@ -345,7 +358,7 @@ void accessMemory(address addr, word* data, WriteEnable we)
 		memcpy(data, block->data + offset, 4);
 	}	else {
 		//If write, copy the wanted byte from `data` into cache
-		printf("Writing data into cache[%d].block[%d].data[%d]\n", index, block_i, offset);
+		printf("Writing data to cache[%d].block[%d].data[%d]\n", index, block_i, offset);
 		memcpy(block->data + offset, data, 4);
 		//This block has been modified, set the dirty bit
 		block->dirty = DIRTY;
@@ -356,6 +369,7 @@ void accessMemory(address addr, word* data, WriteEnable we)
 		}
 	}
 
+	printf("\n****\t**********\t**********\t**********\t****\n\n");
 
   /* This call to accessDRAM occurs when you modify any of the
      cache parameters. It is provided as a stop gap solution.
