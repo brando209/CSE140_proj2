@@ -8,17 +8,19 @@
 /* finds the highest 1 bit, and returns its position, else 0xFFFFFFFF */
 unsigned int uint_log2(word w); 
 
-unsigned int uint_pow2(int n) {
-	unsigned int i, r = 1;
-	for(i = 0; i < n; i++) {
-		r = 2*r;
-	}
-	return r;
+/* prints the value of decimal number n into its binary equivalent */
+void dec2bin(int n) {
+	int c, k;
+  printf("0x%.8x is: ", n);
+  for(c = 31; c >= 0; c--) {
+    k = n >> c;
+    (k & 1) ? printf("1") : printf("0");
+  }
+  printf("\n");
 }
 
 /* return random int from 0..x-1 */
 int randomint( int x );
-
 
 /*
   This function allows the lfu information to be displayed
@@ -89,20 +91,31 @@ void init_lru(int assoc_index, int block_index)
 		-lru.value = 1 -----> this is the most recently used block
 		-lru.value = assoc -> this is the least recently used block
 
-	Note: When a block gets accessed, this function gets called on that block.
-				This function will update the blocks lru.value to 1(most recently used)
+	Note: When a block gets accessed, this function gets called with that blocks index.
+				This function will update the blocks lru.value to 1 (most recently used)
 				and increment this value for all the other blocks in the set by 1.
 */
 void update_policy_info(int assoc_index, int block_index) {
+
+	//Only increment lru values less than this value, unless this value is 0
+	int oldVal = cache[assoc_index].block[block_index].lru.value;
+	if(oldVal == 0)
+		oldVal = assoc;
+
 	//Update the accessed block to be the most recently used block
 	cache[assoc_index].block[block_index].lru.value = 1;
+
 	//Update the rest of the blocks in the set to reflect this change
 	for(int index = 0; index < assoc; index++) {
+
 		int current_lru_value = cache[assoc_index].block[index].lru.value;
+
 		if(cache[assoc_index].block[index].valid == VALID &&
-			 cache[assoc_index].block[index].lru.value <= assoc &&
+			 current_lru_value < oldVal && current_lru_value < assoc &&
 			 index != block_index) {
+
 			cache[assoc_index].block[index].lru.value++;
+
 		}
 	}
 }
@@ -110,7 +123,7 @@ void update_policy_info(int assoc_index, int block_index) {
 /*
 	This function checks if there is a block in the given set that is invalid
 
-		set - pointer to a set needing to be checked
+		set - pointer to the set we want to search
 
 	returns the block index of the first invalid block found, or -1 if none found
 */
@@ -126,24 +139,66 @@ int search_for_invalid(cacheSet* set) {
 	return -1; //No invalid blocks in set
 }
 
-cacheBlock* get_lru_block(cacheSet* set, int* index) {
-			cacheBlock* block = NULL;
-			int block_index;
+/*
+	This function returns a pointer to the lru block in the set
 
-			for(block_index = 0; block_index < assoc; block_index++) {
-				*index = block_index;
-				printf("\tSelecting block %d...\n", *index);
-				block = &(set->block[block_index]);
-				printf("Testing block %d...\n", *index);
+		set - a pointer to the set we want to search
+		index - a pointer to a location that lru block index will be stored
 
-				//Check if this block is least recently used (lru.value == assoc)
-				if(block->lru.value == assoc) {
-					printf("This block is LRU, lru.value is %d\n", block->lru.value);
-					break;
-				}
+	returns a pointer to the lfu block
+*/
+cacheBlock* get_lru_block(cacheSet* set, unsigned int* index) {
 
-			}
-			return block;
+	cacheBlock* block = NULL;
+	int block_index;
+
+	for(block_index = 0; block_index < assoc; block_index++) {
+		*index = block_index;
+		block = &(set->block[block_index]);
+
+		//Check if this block is least recently used (lru.value == assoc)
+		if(block->lru.value == assoc) {
+			break;
+		}
+
+	}
+	return block;
+}
+
+/*
+	This function finds the lfu block in the set
+
+		set - the set to search for the block in
+		index - a pointer to a location that lfu block index will be stored
+
+	returns a pointer to the lfu block, unless tie then return lru block pointer
+*/
+cacheBlock* get_lfu_block(cacheSet* set, unsigned int* index) {
+	cacheBlock* block = NULL;
+
+	//Initially choose the first block as the LFU block
+	*index = 0;
+	block = &(set->block[0]);
+	int count = 1; 	//Keeps track of how many blocks are LFU blocks
+	//For each block in the set, beginning with the second block:
+	//compare the block with the LFU block
+	for(int block_index = 1; block_index < assoc; block_index++) {
+		//If the current block is less frequently used than the current LFU block
+		if(set->block[block_index].accessCount <= block->accessCount) {
+			//Increment if block with same value is found or reset if it has smaller vale
+			(set->block[block_index].accessCount == block->accessCount) ? count++ :	(count = 1);
+
+			//Make the current block the new LFU block
+			*index = block_index;
+			block = &(set->block[block_index]);
+		}
+	}
+	//If more than one block are contenders for lfu, use lru info to break tie
+	if(count > 1) {
+		block = get_lru_block(set, index);
+	}
+
+	return block;
 }
 
 /*
@@ -153,7 +208,6 @@ cacheBlock* get_lru_block(cacheSet* set, int* index) {
 		block_i - an idicator telling which block has been returned
 
 	returns a pointer to the block that we want to replace
-
 */
 cacheBlock* replacementBlock(cacheSet* set, unsigned int* block_i) {
 	cacheBlock* block = NULL;
@@ -171,53 +225,18 @@ cacheBlock* replacementBlock(cacheSet* set, unsigned int* block_i) {
 			*block_i = randomint(assoc);
 			block = &(set->block[*block_i]);
 			break;
-		case LRU: //The block to replace has `lru.value` == `assoc`
-			//TODO:FIX lru information
+		case LRU: //The block to replace has lru.value == assoc, if none invalid
 			//For each block in the set
 			block = get_lru_block(set, block_i);
 			break;
-		case LFU:	//The block to replace has the lowest `accessCount`
-			//Initially choose the first block as the LFU block
-			*block_i = 0;
-			block = &(set->block[0]);
-			int count = 1; 	//Keeps track of how many block are LFU blocks
-			//For each block in the set, beginning with the second block:
-			//compare the block with the LFU block
-			for(int block_index = 1; block_index < assoc; block_index++) {
-				//If the current block is less frequently used than the current LFU block
-				if(set->block[block_index].accessCount <= block->accessCount) {
-					if(set->block[block_index].accessCount == block->accessCount) {
-						count++;
-					}
-					else {
-						count = 1;
-					}
-					//Make the current block the new LFU block
-					*block_i = block_index;
-					block = &(set->block[block_index]);
-				}
-			}
-			if(count > 1) {
-				block = get_lru_block(set, block_i);
-			}
+		case LFU:	//The block to replace has the lowest accessCount
+			block = get_lfu_block(set, block_i);
 			break;
 	}
 
 	return block;
 }
 
-void dec2bin(int n) {
-	int c, k;
-  printf("0x%.8x is: ", n);
-  for(c = 31; c >= 0; c--) {
-    k = n >> c;
-    if (k & 1)
-      printf("1");
-    else
-      printf("0");
-  }
-  printf("\n");
-}
 /*
   This is the primary function you are filling out,
   You are free to add helper functions if you need them
@@ -244,15 +263,6 @@ void accessMemory(address addr, word* data, WriteEnable we)
 	unsigned int block_i = -1;					//Index of the block to replace, if any
 	int cacheMiss = 0;									//Flag that indicates cache miss
 
-	/* Print to confirm correct ADDRESS, MASKS, TAG, INDEX, and OFFSET info *//*
-	printf("****\t**********\t**********\t**********\t****\n");
-	printf("%d Tag bits\t%d Index bits\t%d Offset bits\n", 32 - (index_size + offset_size), index_size, offset_size);
-	printf("Address: ");	dec2bin(addr);
-	printf("Index mask: ");	dec2bin(index_mask);
-	printf("Offset mask: ");	dec2bin(offset_mask);
-  printf("Tag: ");	dec2bin(addr_tag);
-	printf("Index: ");	dec2bin(index);
-	printf("Offset: ");	dec2bin(offset);		*/
 
   /* handle the case of no cache at all - leave this in */
   if(assoc == 0) {
@@ -295,6 +305,17 @@ void accessMemory(address addr, word* data, WriteEnable we)
 	addr_tag = addr >> (index_size + offset_size);
 	transfer_unit = uint_log2(block_size);
 
+	/* Print to confirm correct ADDRESS, MASKS, TAG, INDEX, and OFFSET info */
+	printf("****\t**********\t**********\t**********\t****\n");
+	printf("%d Tag bits\t%d Index bits\t%d Offset bits\n", 32 - (index_size + offset_size), index_size, offset_size);
+	printf("Address: ");	dec2bin(addr);
+	printf("Index mask: ");	dec2bin(index_mask);
+	printf("Offset mask: ");	dec2bin(offset_mask);
+  printf("Tag: ");	dec2bin(addr_tag);
+	printf("Index: ");	dec2bin(index);
+	printf("Offset: ");	dec2bin(offset);
+	printf("\n");
+
 	int block_index;
 
 	//This part is common between READ and WRITE, finding the correct block
@@ -306,14 +327,22 @@ void accessMemory(address addr, word* data, WriteEnable we)
 			printf("HIT!\n");
 
 			block_i = block_index;
+
+			//Hardcoded correction for offset error(ex: offset = 14)
+			if(offset > block_size - 4)
+				offset = block_size - 4;
+
 			//Highlight the word in GREEN
 			highlight_offset(index, block_index, offset, HIT);
+			printf("\nHighlghted offset: %d\n", offset);
 			//Copy the value to data for the caller
 			memcpy(data, block->data + offset, 4);
-			//Update lru policy information
-			update_policy_info(index, block_index);
+			//Update lru policy information, if block not already lru
+			if(block->lru.value != 1)
+				update_policy_info(index, block_index);
 			//Increment accessCount for this block
-			block->accessCount++;
+			if(policy == LFU)
+				block->accessCount++;
 
 			//Block found, break out of loop
 		  break;
@@ -353,31 +382,31 @@ void accessMemory(address addr, word* data, WriteEnable we)
 			printf("Write successful from cache[%d].block[%d] to memory address 0x%.8x\n", index, block_i, block_addr);
 		}
 
-		//Handle the miss by moving the block from DRAM into this block
-		printf("Getting replacement block from memory address %.8x...\n\n", addr);
+		//Handle the miss by moving a block from DRAM into this block
+		printf("Getting replacement block from memory address 0x%.8x...\n\n", addr);
 		//Put block found at memory location into the replaced blocks data field
 		accessDRAM(addr, block->data, transfer_unit, READ);
-		//Update LRU policy information
-		update_policy_info(index, block_i);
 		//Set this block as VALID
 		block->valid = VALID;
+		//Update LRU policy information
+		update_policy_info(index, block_i);
 		//Update the tag field
 		block->tag = addr_tag;
 		//Reset accessCount;
-		if(policy == LFU)
-			block->accessCount = 0;
+		block->accessCount = 0;
 		//Set this block as VIRGIN
-		if(memory_sync_policy == WRITE_BACK)
-			block->dirty = VIRGIN;
+		block->dirty = VIRGIN;
 
 	}//End if(cacheMiss)
 
+/*//Print all the bytes in the block
 	for(int i  = 0; i < block_size; i++) {
 		printf("%.2x ", block->data[i]);
 	}
 	printf("\n");
+*/
 
-
+	//Handle moving the data between cache and cpu using memcpy()
 	if(we == READ) {
 		//If read, copy the wanted byte from cache into `data` for the caller
 		printf("Reading data from cache[%d].block[%d].data[%d]\n", index, block_i, offset);
@@ -386,8 +415,9 @@ void accessMemory(address addr, word* data, WriteEnable we)
 		//If write, copy the wanted byte from `data` into cache
 		printf("Writing data to cache[%d].block[%d].data[%d]\n", index, block_i, offset);
 		memcpy(block->data + offset, data, 4);
-		//This block has been modified, set the dirty bit
-		block->dirty = DIRTY;
+		//This block has been modified, set the dirty bit (for write-back)
+		if(memory_sync_policy == WRITE_BACK)
+			block->dirty = DIRTY;
 		//Update the block in memory (for write-through)
 		if(memory_sync_policy == WRITE_THROUGH) {
 			printf("Writing through to memory address %.8x...\n\n", addr);
